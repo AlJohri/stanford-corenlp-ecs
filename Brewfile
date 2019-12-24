@@ -1,0 +1,1 @@
+brew 'amazon-ecs-cli'
