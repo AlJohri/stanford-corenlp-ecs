@@ -30,6 +30,10 @@ case $1 in
             --group-names default \
             --query 'SecurityGroups[0].GroupId' --output text)
 
+        # aws ec2 authorize-security-group-ingress \
+        #     --group-name default \
+        #     --ip-permissions IpProtocol=-1,IpRanges='[{CidrIp=0.0.0.0/0}]'
+
         # Ensure `default` key-pair exists
         CHECK_KEY_PAIR=$(aws ec2 describe-key-pairs --query "KeyPairs[?KeyName==\`$KEY_PAIR_NAME\`].KeyName" --output text)
         if [ -z $CHECK_KEY_PAIR ]; then
