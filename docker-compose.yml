@@ -11,9 +11,3 @@ services:
       '-port', '9000',
       '-timeout', '15000'
     ]
-    logging:
-      driver: awslogs
-      options:
-        awslogs-group: corenlp
-        awslogs-region: us-east-1
-        awslogs-stream-prefix: corenlp

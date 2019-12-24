@@ -7,10 +7,12 @@
 
 set -e
 
+export AWS_PROFILE=al2
+
 export ECS_CLUSTER=default
 export COMPOSE_PROJECT_NAME=corenlp
-export AWS_PROFILE=al2
 export AWS_REGION=us-east-1
+export COMPOSE_FILE=docker-compose.prod.yml
 
 error() {
     >&2 echo "[ERROR] $@"
@@ -67,19 +69,18 @@ case $1 in
 
         ecs-cli up \
             --launch-type EC2 \
-            --instance-type "a1.xlarge" \
-            --size 3 \
             --keypair "$KEY_PAIR_NAME" \
             --vpc "$VPC_ID" \
             --subnets "$SUBNET_IDS" \
             --security-group "$SECURITY_GROUP" \
-            --capability-iam
+            --capability-iam \
+            "${@:2}"
 
         ;;
 
     scale)
-
-        ecs-cli scale --capability-iam "$@"
+    
+        ecs-cli scale --capability-iam "${@:2}"
 
         ;;
 
