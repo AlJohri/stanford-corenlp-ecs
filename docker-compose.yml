@@ -1,12 +1,19 @@
-version: "3.0"
+version: "2"
 services:
   app:
     mem_reservation: 2g
     mem_limit: 4g
+    image: graham3333/corenlp-complete
+    ports: ["9000:9000"]
+    command: [
+      'java', '-mx2g', '-cp', '*',
+      'edu.stanford.nlp.pipeline.StanfordCoreNLPServer',
+      '-port', '9000',
+      '-timeout', '15000'
+    ]
     logging:
       driver: awslogs
       options:
         awslogs-group: corenlp
         awslogs-region: us-east-1
-    image: 681762360827.dkr.ecr.us-east-1.amazonaws.com/graham3333/corenlp-complete
-    ports: ["9000:9000"]
+        awslogs-stream-prefix: corenlp

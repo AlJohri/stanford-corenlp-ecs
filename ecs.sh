@@ -48,6 +48,8 @@ case $1 in
         ecs-cli up \
             --cluster "$CLUSTER" \
             --launch-type EC2 \
+            --instance-type "a1.xlarge" \
+            --size 3 \
             --keypair "$KEY_PAIR_NAME" \
             --vpc "$VPC_ID" \
             --subnets "$SUBNET_IDS" \
@@ -56,24 +58,14 @@ case $1 in
 
         ;;
 
-    down)
-
-        ecs-cli down --cluster "$CLUSTER"
-
-        ;;
-
     scale)
 
-        if [ "$2" ]; then
-            SCALE="$2"
-        else
-            error "'$2' requires one non-empty arguments"
-        fi
+        ecs-cli scale --capability-iam "$@"
 
-        ecs-cli scale --size "$SCALE" --capability-iam
         ;;
 
     *)
         ecs-cli "$@"
         ;;
+
 esac
