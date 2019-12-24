@@ -8,28 +8,28 @@
 set -e
 
 export AWS_PROFILE=al2
+export AWS_REGION=us-east-1
 
 export ECS_CLUSTER=default
-export COMPOSE_PROJECT_NAME=corenlp
-export AWS_REGION=us-east-1
-export COMPOSE_FILE=docker-compose.prod.yml
+export LOAD_BALANCER_NAME=default
+export TARGET_GROUP_NAME=default
+export KEY_PAIR_NAME=default
 
-error() {
-    >&2 echo "[ERROR] $@"
-}
+export COMPOSE_PROJECT_NAME=corenlp
+export COMPOSE_FILE=docker-compose.prod.yml
 
 case $1 in
 
     up)
 
-        KEY_PAIR_NAME=default
         PEM_FILE_PATH="$HOME/.ssh/${AWS_PROFILE}_${KEY_PAIR_NAME}.pem"
 
         # Get Default VPC
-        VPC_ID=$(aws ec2 describe-vpcs --query 'Vpcs[?IsDefault==`true`].VpcId' --output text)
+        VPC_ID=$(aws ec2 describe-vpcs --query '(Vpcs[?IsDefault==`true`])[0].VpcId' --output text)
 
-        SUBNET_IDS=$(aws ec2 describe-subnets \
-            --query "Subnets[?VpcId==\`$VPC_ID\`].SubnetId" --output text  | tr -s '[:blank:]' ',')
+        # Get only first two subnets since load balancer only works across two availability zones (i.e two subnets)
+        SUBNET_IDS=$(aws ec2 describe-subnets --query "(Subnets[?VpcId==\`$VPC_ID\`])[0:2].SubnetId" \
+                        --output text | tr -s '[:blank:]' ',')
 
         # Get Default Security Group
         SECURITY_GROUP=$(aws ec2 describe-security-groups \
@@ -57,7 +57,7 @@ case $1 in
         esac
 
         # Check if `default` key-pair exists and create new key-pair if not
-        CHECK_KEY_PAIR=$(aws ec2 describe-key-pairs --query "KeyPairs[?KeyName==\`$KEY_PAIR_NAME\`].KeyName" --output text)
+        CHECK_KEY_PAIR=$(aws ec2 describe-key-pairs --query "(KeyPairs[?KeyName==\`$KEY_PAIR_NAME\`])[0].KeyName" --output text)
         if [ -z $CHECK_KEY_PAIR ]; then
             echo "$KEY_PAIR_NAME keypair does not exist. creating..."
             PEM=$(aws ec2 create-key-pair --key-name default --query 'KeyMaterial' --output text)
@@ -65,6 +65,46 @@ case $1 in
             echo "$PEM" > "$PEM_FILE_PATH"
             chmod 600 "$PEM_FILE_PATH"
             echo "created ${KEY_PAIR_NAME} key pair at ${PEM_FILE_PATH}"
+        fi
+
+        ROLE_ARN=$(aws iam list-roles --query '(Roles[?RoleName==`AWSServiceRoleForECS`])[0].Arn' --output text)
+        if [ $ROLE_ARN = "None" ]; then
+            aws iam create-service-linked-role --aws-service-name ecs.amazonaws.com
+            ROLE_ARN=$(aws iam list-roles --query '(Roles[?RoleName==`AWSServiceRoleForECS`])[0].Arn' --output text)
+        fi
+
+        LB_ARN=$(aws elbv2 describe-load-balancers \
+            --query "(LoadBalancers[?LoadBalancerName==\`$LOAD_BALANCER_NAME\`])[0].LoadBalancerArn" --output text)
+        if [ $LB_ARN = "None" ]; then
+            echo "$LOAD_BALANCER_NAME load balancer does not exist. creating..."
+            LB_ARN=$(aws elbv2 create-load-balancer \
+                        --name "$LOAD_BALANCER_NAME" \
+                        --subnets $(echo $SUBNET_IDS | tr -s ',' '[:blank:]') \
+                        --security-groups "$SECURITY_GROUP" \
+                        --query 'LoadBalancers[0].LoadBalancerArn' --output text)
+            echo "$LB_ARN"
+        fi
+
+        TG_ARN=$(aws elbv2 describe-target-groups \
+            --query "(TargetGroups[?TargetGroupName==\`$TARGET_GROUP_NAME\`])[0].TargetGroupArn" --output text)
+        if [ $TG_ARN = "None" ]; then
+            echo "$TARGET_GROUP_NAME target group does not exist. creating..."
+            TG_ARN=$(aws elbv2 create-target-group \
+                        --name default --protocol HTTP --port 80 --vpc-id "$VPC_ID" \
+                        --query 'TargetGroups[0].TargetGroupArn' --output text)
+            echo "$TG_ARN"
+        fi
+
+        LISTNER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn "$LB_ARN" \
+            --query "(Listeners[?LoadBalancerArn==\`$LB_ARN\`])[0].ListenerArn" --output text)
+        if [ $LISTNER_ARN = "None" ]; then
+            echo "default listner does not exist. creating..."
+            LISTNER_ARN=$(aws elbv2 create-listener \
+                        --load-balancer-arn "$LB_ARN" --protocol HTTP --port 80  \
+                        --default-actions Type=forward,TargetGroupArn="$TG_ARN" \
+                        --query 'Listeners[0].ListenerArn' \
+                        --output text)
+            echo "$LISTNER_ARN"
         fi
 
         ecs-cli up \
@@ -76,11 +116,78 @@ case $1 in
             --capability-iam \
             "${@:2}"
 
+        LB_DNS=$(aws elbv2 describe-load-balancers \
+                    --query "(LoadBalancers[?LoadBalancerName==\`$LOAD_BALANCER_NAME\`])[0].DNSName" --output text)
+
+        echo "Load Balancer is at: http://$LB_DNS"
+
         ;;
 
+    down)
+
+        ecs-cli compose service rm
+
+        LB_ARN=$(aws elbv2 describe-load-balancers \
+                    --query "(LoadBalancers[?LoadBalancerName==\`$LOAD_BALANCER_NAME\`])[0].LoadBalancerArn" --output text)
+
+        if [ $LB_ARN != "None" ]; then
+
+            LISTNER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn "$LB_ARN" \
+                            --query "(Listeners[?LoadBalancerArn==\`$LB_ARN\`])[0].ListenerArn" --output text)
+
+            if [ $LISTNER_ARN != "None" ]; then
+                echo "Tearing down default listner..."
+                aws elbv2 delete-listener --listener-arn "$LISTNER_ARN"
+            fi
+
+            echo "Tearing down default load balancer..."
+            aws elbv2 delete-load-balancer --load-balancer-arn "$LB_ARN" 1>/dev/null
+        fi
+
+        TG_ARN=$(aws elbv2 describe-target-groups \
+                    --query "(TargetGroups[?TargetGroupName==\`$TARGET_GROUP_NAME\`])[0].TargetGroupArn" --output text)
+
+        if [ $TG_ARN != "None" ]; then
+            echo "Tearing down default target group..."
+            aws elbv2 delete-target-group --target-group-arn "$TG_ARN" 1>/dev/null
+        fi
+
+        echo "Tearing down ECS cluster..."
+        ecs-cli down "${@:2}"
+
+        ;;
+
+    compose)
+
+        # When user runs: `./ecs compose service up`
+        if [ "$2" == "service" ] && [ "$3" == "up" ]; then
+            ROLE_ARN=$(aws iam list-roles --query '(Roles[?RoleName==`AWSServiceRoleForECS`])[0].Arn' --output text)
+            TG_ARN=$(aws elbv2 describe-target-groups --query "TargetGroups[?TargetGroupName==\`$TARGET_GROUP_NAME\`].TargetGroupArn" --output text)
+            ecs-cli compose service up \
+                --target-group-arn "$TG_ARN" \
+                --container-name app \
+                --container-port 9000 \
+                --create-log-groups \
+                --health-check-grace-period 30 \
+                --role "$ROLE_ARN" "${@:2}"
+        else
+            ecs-cli compose "${@:2}"
+        fi
+
+        ;;
+
+
     scale)
-    
+
         ecs-cli scale --capability-iam "${@:2}"
+
+        ;;
+
+    url)
+
+        LB_DNS=$(aws elbv2 describe-load-balancers \
+                    --query "(LoadBalancers[?LoadBalancerName==\`$LOAD_BALANCER_NAME\`])[0].DNSName" --output text)
+        echo "http://$LB_DNS"
 
         ;;
 

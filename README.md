@@ -10,24 +10,18 @@ docker pull graham3333/corenlp-complete
 # start ECS cluster
 ./ecs up --size 3 --instance-type c5.large
 
-# create aws log group
-./ecs compose create --create-log-groups
+# start service
+./ecs compose service up
 
-# create task definition and run one instance of task
-./ecs compose up
+# scale service to 3 
+./ecs compose service scale 3
 
-# check if task is running
-./ecs compose ps
+# make sure 3 containers are running
+./ecs compose service ps
+```
 
-# scale up service 3 containers
-./ecs compose scale 3
+## Quickstop
 
-# scale down all containers
-./ecs compose scale 0
-
-# scale down all cluster instances
-./ecs scale --size 0
-
-# shutdown ECS cluster
+```
 ./ecs down
 ```
