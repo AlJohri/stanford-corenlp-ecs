@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 
+# This is a thin wrapper around the `ecs-cli` command line tool to set sensible
+# defaults for this project. It also makes the `ecs-cli up` comamnd more
+# seamless by creating a `default` keypair and using the default vpc, security groups
+# etc.
+
 set -e
 
-export CLUSTER=default
 export ECS_CLUSTER=default
 export COMPOSE_PROJECT_NAME=corenlp
 export AWS_PROFILE=al2
@@ -30,11 +34,27 @@ case $1 in
             --group-names default \
             --query 'SecurityGroups[0].GroupId' --output text)
 
-        # aws ec2 authorize-security-group-ingress \
-        #     --group-name default \
-        #     --ip-permissions IpProtocol=-1,IpRanges='[{CidrIp=0.0.0.0/0}]'
+        # Get current IP and convert to CIDR block for adding to default security group
+        CIDR=$(curl -s http://checkip.amazonaws.com)/32
 
-        # Ensure `default` key-pair exists
+        # Add CIDR block to default security group
+        set +e
+        SG_INGRESS_CHECK=$(aws ec2 authorize-security-group-ingress \
+            --group-name default \
+            --ip-permissions IpProtocol=-1,IpRanges="[{CidrIp=$CIDR}]" 2>&1)
+        set -e
+
+        # Do not print error if CIDR block already exists in security group
+        case $SG_INGRESS_CHECK in
+            *"InvalidPermission.Duplicate"*)
+                # Do Nothing on InvalidPermission.Duplicate
+                ;;
+            *)
+                echo "$SG_INGRESS_CHECK"
+                ;;
+        esac
+
+        # Check if `default` key-pair exists and create new key-pair if not
         CHECK_KEY_PAIR=$(aws ec2 describe-key-pairs --query "KeyPairs[?KeyName==\`$KEY_PAIR_NAME\`].KeyName" --output text)
         if [ -z $CHECK_KEY_PAIR ]; then
             echo "$KEY_PAIR_NAME keypair does not exist. creating..."
@@ -46,7 +66,6 @@ case $1 in
         fi
 
         ecs-cli up \
-            --cluster "$CLUSTER" \
             --launch-type EC2 \
             --instance-type "a1.xlarge" \
             --size 3 \
