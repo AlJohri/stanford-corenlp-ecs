@@ -73,19 +73,19 @@ case $1 in
             ROLE_ARN=$(aws iam list-roles --query '(Roles[?RoleName==`AWSServiceRoleForECS`])[0].Arn' --output text)
         fi
 
-        LB_ARN=$(aws elbv2 describe-load-balancers \
+        ALB_ARN=$(aws elbv2 describe-load-balancers \
             --query "(LoadBalancers[?LoadBalancerName==\`$LOAD_BALANCER_NAME\`])[0].LoadBalancerArn" --output text)
-        if [ $LB_ARN = "None" ]; then
+        if [ $ALB_ARN = "None" ]; then
             echo "$LOAD_BALANCER_NAME load balancer does not exist. creating..."
-            LB_ARN=$(aws elbv2 create-load-balancer \
+            ALB_ARN=$(aws elbv2 create-load-balancer \
                         --name "$LOAD_BALANCER_NAME" \
                         --subnets $(echo $SUBNET_IDS | tr -s ',' '[:blank:]') \
                         --security-groups "$SECURITY_GROUP" \
                         --query 'LoadBalancers[0].LoadBalancerArn' --output text)
-            echo "$LB_ARN"
+            echo "$ALB_ARN"
         fi
 
-        aws elbv2 modify-load-balancer-attributes --load-balancer-arn $LB_ARN --attributes Key=idle_timeout.timeout_seconds,Value=360
+        aws elbv2 modify-load-balancer-attributes --load-balancer-arn $ALB_ARN --attributes Key=idle_timeout.timeout_seconds,Value=360 1>/dev/null
 
         TG_ARN=$(aws elbv2 describe-target-groups \
             --query "(TargetGroups[?TargetGroupName==\`$TARGET_GROUP_NAME\`])[0].TargetGroupArn" --output text)
@@ -97,12 +97,14 @@ case $1 in
             echo "$TG_ARN"
         fi
 
-        LISTNER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn "$LB_ARN" \
-            --query "(Listeners[?LoadBalancerArn==\`$LB_ARN\`])[0].ListenerArn" --output text)
+        aws elbv2 modify-target-group-attributes --target-group-arn $TG_ARN --attributes Key=deregistration_delay.timeout_seconds,Value=0 1>/dev/null
+
+        LISTNER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn "$ALB_ARN" \
+            --query "(Listeners[?LoadBalancerArn==\`$ALB_ARN\`])[0].ListenerArn" --output text)
         if [ $LISTNER_ARN = "None" ]; then
             echo "default listner does not exist. creating..."
             LISTNER_ARN=$(aws elbv2 create-listener \
-                        --load-balancer-arn "$LB_ARN" --protocol HTTP --port 80  \
+                        --load-balancer-arn "$ALB_ARN" --protocol HTTP --port 80  \
                         --default-actions Type=forward,TargetGroupArn="$TG_ARN" \
                         --query 'Listeners[0].ListenerArn' \
                         --output text)
@@ -129,13 +131,13 @@ case $1 in
 
         ecs-cli compose service rm
 
-        LB_ARN=$(aws elbv2 describe-load-balancers \
+        ALB_ARN=$(aws elbv2 describe-load-balancers \
                     --query "(LoadBalancers[?LoadBalancerName==\`$LOAD_BALANCER_NAME\`])[0].LoadBalancerArn" --output text)
 
-        if [ $LB_ARN != "None" ]; then
+        if [ $ALB_ARN != "None" ]; then
 
-            LISTNER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn "$LB_ARN" \
-                            --query "(Listeners[?LoadBalancerArn==\`$LB_ARN\`])[0].ListenerArn" --output text)
+            LISTNER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn "$ALB_ARN" \
+                            --query "(Listeners[?LoadBalancerArn==\`$ALB_ARN\`])[0].ListenerArn" --output text)
 
             if [ $LISTNER_ARN != "None" ]; then
                 echo "Tearing down default listner..."
@@ -143,7 +145,7 @@ case $1 in
             fi
 
             echo "Tearing down default load balancer..."
-            aws elbv2 delete-load-balancer --load-balancer-arn "$LB_ARN" 1>/dev/null
+            aws elbv2 delete-load-balancer --load-balancer-arn "$ALB_ARN" 1>/dev/null
         fi
 
         TG_ARN=$(aws elbv2 describe-target-groups \
@@ -170,8 +172,8 @@ case $1 in
                 --container-name app \
                 --container-port 9000 \
                 --create-log-groups \
-                --health-check-grace-period 30 \
-                --role "$ROLE_ARN" "${@:2}"
+                --health-check-grace-period 60 \
+                --role "$ROLE_ARN" "${@:4}"
         else
             ecs-cli compose "${@:2}"
         fi
@@ -182,6 +184,21 @@ case $1 in
     scale)
 
         ecs-cli scale --capability-iam "${@:2}"
+
+        ;;
+
+    tg)
+
+        TG_ARN=$(aws elbv2 describe-target-groups \
+            --query "(TargetGroups[?TargetGroupName==\`$TARGET_GROUP_NAME\`])[0].TargetGroupArn" --output text)
+        echo "$TG_ARN"
+        ;;
+
+    alb)
+
+        ALB_ARN=$(aws elbv2 describe-load-balancers \
+            --query "(LoadBalancers[?LoadBalancerName==\`$LOAD_BALANCER_NAME\`])[0].LoadBalancerArn" --output text)
+        echo "$ALB_ARN"
 
         ;;
 
