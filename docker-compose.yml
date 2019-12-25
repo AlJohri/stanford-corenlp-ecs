@@ -1,13 +1,16 @@
 version: "2"
 services:
   app:
-    mem_reservation: 2g
-    mem_limit: 4g
+    mem_reservation: 4g
+    mem_limit: 8g
     image: graham3333/corenlp-complete
     ports: ["9000:9000"]
     command: [
-      'java', '-mx2g', '-cp', '*',
+      'java', '-Xmx4g', '-cp', '*',
       'edu.stanford.nlp.pipeline.StanfordCoreNLPServer',
       '-port', '9000',
-      '-timeout', '15000'
+      '-timeout', '120000',
+      '-threads', '8',
+      '-maxCharLength', '-1',
+      '-preload', 'tokenize,ssplit,pos,lemma,depparse,ner,coref',
     ]

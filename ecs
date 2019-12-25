@@ -85,6 +85,8 @@ case $1 in
             echo "$LB_ARN"
         fi
 
+        aws elbv2 modify-load-balancer-attributes --load-balancer-arn $LB_ARN --attributes Key=idle_timeout.timeout_seconds,Value=360
+
         TG_ARN=$(aws elbv2 describe-target-groups \
             --query "(TargetGroups[?TargetGroupName==\`$TARGET_GROUP_NAME\`])[0].TargetGroupArn" --output text)
         if [ $TG_ARN = "None" ]; then

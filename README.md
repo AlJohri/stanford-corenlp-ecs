@@ -8,12 +8,12 @@ brew bundle
 docker pull graham3333/corenlp-complete
 
 # start ECS cluster
-./ecs up --size 3 --instance-type c5.large
+./ecs up --size 3 --instance-type t3.xlarge
 
 # start service
 ./ecs compose service up
 
-# scale service to 3 
+# scale service to 3
 ./ecs compose service scale 3
 
 # make sure 3 containers are running
